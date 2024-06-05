@@ -9,7 +9,7 @@ const express = require("express");
 var cors = require("cors");
 
 const app = express();
-const port = 8090;
+const port = process.env.PORT || 8090;
 
 const got = require("got");
 const twitter = require("twitter-text");
