@@ -1,8 +1,6 @@
 // proxyConfig.js
 const path = require("path");
-const fs = require("fs");
-const https = require("https");
-const got = require("got");
+const { HttpsProxyAgent, HttpProxyAgent } = require("hpagent");
 
 // Fake user agents array - you can expand this list
 const FAKE_USER_AGENTS = [
@@ -34,53 +32,26 @@ function getProxyUrl(scheme) {
  return `${scheme}://${config.SCRAPING_PROXY_USERNAME}:${config.SCRAPING_PROXY_PASSWORD}@${config.SCRAPING_PROXY_HOST}`;
 }
 
-// Get proxy configuration
-const SCRAPING_PROXIES = config.SCRAPING_PROXY_HOST
- ? {
-    http: getProxyUrl("http"),
-    https: getProxyUrl("https"),
-   }
- : {};
-
-// Function to get proxy certificate
-async function getScrapingProxyCertPath() {
- if (!config.SCRAPING_PROXY_CERT_URL) {
-  return null;
- }
-
- const certPath = path.join(config.BASE_DIR, "proxy_ca_crt.pem");
-
- if (!fs.existsSync(certPath)) {
-  console.log(`Downloading proxy cert to ${certPath}`);
-  const response = await got(config.SCRAPING_PROXY_CERT_URL, {
-   responseType: "arraybuffer",
-  });
-  fs.writeFileSync(certPath, response.data);
- }
-
- return certPath;
-}
-
 // Main function to get axios config for scraping
 async function getScrapingConfig() {
- const certPath = await getScrapingProxyCertPath();
-
- const httpsAgent = new https.Agent({
-  ca: certPath ? fs.readFileSync(certPath) : undefined,
- });
-
  return {
   headers: {
    "User-Agent":
     FAKE_USER_AGENTS[Math.floor(Math.random() * FAKE_USER_AGENTS.length)],
   },
-  proxy: SCRAPING_PROXIES,
-  httpsAgent,
+  agent: {
+   https: new HttpsProxyAgent({
+    https: getProxyUrl("https"),
+   }),
+   //  http:
+   //   SCRAPING_PROXIES.http &&
+   //   new HttpProxyAgent({
+   //    http: getProxyUrl("http"),
+   //   }),
+  },
  };
 }
 
 module.exports = {
  getScrapingConfig,
- FAKE_USER_AGENTS,
- SCRAPING_PROXIES,
 };
