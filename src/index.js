@@ -4,6 +4,7 @@ const metascraper = require("metascraper")([
  require("metascraper-image")(),
  require("metascraper-logo-favicon")(),
 ]);
+require("dotenv").config?.();
 
 const express = require("express");
 var cors = require("cors");
