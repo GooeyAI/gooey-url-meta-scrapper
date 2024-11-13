@@ -21,15 +21,15 @@ const config = {
  SCRAPING_PROXY_HOST: process.env.SCRAPING_PROXY_HOST || "",
  SCRAPING_PROXY_USERNAME: process.env.SCRAPING_PROXY_USERNAME || "",
  SCRAPING_PROXY_PASSWORD: process.env.SCRAPING_PROXY_PASSWORD || "",
- SCRAPING_PROXY_CERT_URL: process.env.SCRAPING_PROXY_CERT_URL || "",
+ SCRAPING_PROXY_PORT: process.env.SCRAPING_PROXY_PORT || "",
  BASE_DIR: process.env.BASE_DIR || path.join(__dirname, ""),
 };
 
 // Build proxy URL
-function getProxyUrl(scheme) {
+function getProxyUrl() {
  if (!config.SCRAPING_PROXY_HOST) return "";
 
- return `${scheme}://${config.SCRAPING_PROXY_USERNAME}:${config.SCRAPING_PROXY_PASSWORD}@${config.SCRAPING_PROXY_HOST}`;
+ return `http://${config.SCRAPING_PROXY_USERNAME}:${config.SCRAPING_PROXY_PASSWORD}@${config.SCRAPING_PROXY_HOST}:${config.SCRAPING_PROXY_PORT}`;
 }
 
 // Main function to get axios config for scraping
@@ -40,14 +40,9 @@ async function getScrapingConfig() {
     FAKE_USER_AGENTS[Math.floor(Math.random() * FAKE_USER_AGENTS.length)],
   },
   agent: {
-   https: new HttpsProxyAgent({
-    https: getProxyUrl("https"),
+   http: new HttpProxyAgent({
+    http: getProxyUrl(),
    }),
-   //  http:
-   //   SCRAPING_PROXIES.http &&
-   //   new HttpProxyAgent({
-   //    http: getProxyUrl("http"),
-   //   }),
   },
  };
 }
