@@ -1,6 +1,6 @@
 // proxyConfig.js
 const path = require("path");
-const { HttpsProxyAgent, HttpProxyAgent } = require("hpagent");
+const { HttpsProxyAgent } = require("https-proxy-agent");
 
 // Fake user agents array - you can expand this list
 const FAKE_USER_AGENTS = [
@@ -34,15 +34,15 @@ function getProxyUrl() {
 
 // Main function to get axios config for scraping
 async function getScrapingConfig() {
+ const httpsProxyAgent = new HttpsProxyAgent(getProxyUrl());
  return {
   headers: {
    "User-Agent":
     FAKE_USER_AGENTS[Math.floor(Math.random() * FAKE_USER_AGENTS.length)],
   },
   agent: {
-   http: new HttpProxyAgent({
-    http: getProxyUrl(),
-   }),
+   https: httpsProxyAgent,
+   http: httpsProxyAgent,
   },
  };
 }
