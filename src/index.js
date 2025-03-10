@@ -4,34 +4,37 @@ const metascraper = require("metascraper")([
  require("metascraper-image")(),
  require("metascraper-logo-favicon")(),
 ]);
-require("dotenv").config?.();
+require("dotenv").config();
 
 const express = require("express");
-var cors = require("cors");
+const cors = require("cors");
+const axios = require("axios");
 const { getScrapingConfig } = require("./proxyConfig");
+const twitter = require("twitter-text");
 
 const app = express();
 const port = process.env.PORT || 8090;
-
-const got = require("got");
-const twitter = require("twitter-text");
-
-require("dotenv").config();
-
 const REQUEST_TIMEOUT_MS =
- parseInt(process.env.REQUEST_TIMEOUT_SEC || 40) * 1000;
-
-app.listen(port, () => {
- console.log(`Server started on port ${port}`);
-});
+ parseInt(process.env.REQUEST_TIMEOUT_SEC || "40") * 1000;
+const MAX_HTML_SIZE = 1000000;
 
 app.use(cors());
 
-app.get("/fetchUrlMeta", (req, res) => {
- const { url } = req.query;
- dispatch({ data: [url], cmd: "fetchMetadata" }).then((response) => {
+app.listen(port, () => {
+ console.log(`✅ Server started on port ${port}`);
+});
+
+app.get("/fetchUrlMeta", async (req, res) => {
+ try {
+  const { url } = req.query;
+  if (!url) return res.status(400).json({ error: "Missing 'url' parameter" });
+
+  const response = await dispatch({ data: [url], cmd: "fetchMetadata" });
   res.json(response);
- });
+ } catch (error) {
+  console.error("Error processing request:", error);
+  res.status(500).json({ error: "Failed to fetch metadata" });
+ }
 });
 
 async function dispatch({ cmd, data }) {
@@ -39,15 +42,8 @@ async function dispatch({ cmd, data }) {
   case "extractUrls":
    return twitter.extractUrls(data);
   case "fetchMetadata":
-   let url;
-   for (url of data) {
-    try {
-     let metadata = await fetchMetadata(url);
-     metadata.url = url;
-     return metadata;
-    } catch (e) {
-     console.log("!", url, e);
-    }
+   for (const url of data) {
+    return await fetchMetadata(url);
    }
    break;
  }
@@ -57,47 +53,66 @@ async function dispatch({ cmd, data }) {
 async function fetchMetadata(targetUrl) {
  const proxyConfig = await getScrapingConfig();
 
- const {
-  body: html,
-  url,
-  headers,
-  redirectUrls = [],
- } = await got(targetUrl, {
-  timeout: {
-   request: REQUEST_TIMEOUT_MS,
-  },
-  retry: {
-   limit: 0,
-  },
-  ...proxyConfig, // Add proxy configuration here
+ const response = await axios({
+  method: "get",
+  url: targetUrl,
+  timeout: REQUEST_TIMEOUT_MS,
+  responseType: "stream",
+  headers: { Range: "bytes=0-65535" },
+  ...proxyConfig,
  });
 
- const contentType = headers?.["content-type"];
- let hostname = new URL(
-  redirectUrls.length ? [...redirectUrls].pop() : targetUrl
- ).hostname;
- const hostnameParts = hostname.split(".");
+ const contentType = response.headers["content-type"] || "";
+ let html = "";
+ let hasEnded = false;
 
- if (hostnameParts.length >= 2) {
-  const mainDomain = hostnameParts.slice(-2, -1)[0]; // gooey, google, facebook etc
-  const ext = hostnameParts.slice(-1)[0]; // .ai, .com, .org, .net, etc
-  if (hostname.includes("googleapis"))
-   // for favicon logo from googleapis include subdomain
-   hostname = hostnameParts.slice(-3, -1).join("."); // storage.googleapis.com etc
-  hostname = mainDomain + "." + ext;
- }
+ return new Promise((resolve, reject) => {
+  response.data.on("data", (chunk) => {
+   if (hasEnded) return;
+   html += chunk.toString();
+   if (html.length >= MAX_HTML_SIZE) {
+    hasEnded = true;
+    response.data.destroy();
+    processMetadata(html, targetUrl, contentType, resolve, startTime);
+   }
+  });
+
+  response.data.on("end", () => {
+   if (!hasEnded) {
+    processMetadata(html, targetUrl, contentType, resolve, startTime);
+   }
+  });
+
+  response.data.on("error", reject);
+ });
+}
+
+async function processMetadata(
+ html,
+ targetUrl,
+ contentType,
+ resolve,
+ startTime
+) {
+ const urlObj = new URL(targetUrl);
+ const hostnameParts = urlObj.hostname.split(".");
+ let mainDomain = hostnameParts.slice(-2, -1)[0] || urlObj.hostname;
+ let ext = hostnameParts.slice(-1)[0] || "";
+
+ const faviconUrl = new URL("https://www.google.com/s2/favicons");
+ faviconUrl.searchParams.set("sz", "128");
+ faviconUrl.searchParams.set("domain", `${mainDomain}.${ext}`);
 
  const preMeta = {
-  redirect_urls: redirectUrls,
   url: targetUrl,
-  logo: `https://www.google.com/s2/favicons?sz=128&domain=${hostname}`,
+  logo: faviconUrl.toString(),
   content_type: contentType,
  };
 
- if (!contentType.includes("text/html")) return preMeta;
- const metaData = await metascraper({ html, url });
- return {
-  ...preMeta,
-  ...metaData,
- };
+ if (!contentType.includes("text/html")) return resolve(preMeta);
+
+ const metaData = await metascraper({ html, url: targetUrl });
+ console.log(`✅ Fetched metadata for ${targetUrl}`);
+
+ resolve({ ...preMeta, ...metaData });
 }
