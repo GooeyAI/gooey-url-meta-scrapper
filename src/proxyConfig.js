@@ -4,7 +4,6 @@ dotenv.config();
 const path = require("path");
 const { HttpsProxyAgent } = require("https-proxy-agent");
 
-// Fake user agents array - you can expand this list
 const FAKE_USER_AGENTS = [
  // chrome
  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.5112.79 Safari/537.36",
@@ -39,8 +38,7 @@ function getProxyUrl() {
  return proxyUrl.toString();
 }
 
-// Main function to get axios config for scraping
-async function getScrapingConfig() {
+function getScrapingConfig() {
  const httpsProxyAgent = new HttpsProxyAgent(getProxyUrl());
  return {
   headers: {
