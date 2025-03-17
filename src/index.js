@@ -42,7 +42,7 @@ async function fetchMetadata(targetUrl) {
 
  const response = await axios.get(targetUrl, {
   timeout: REQUEST_TIMEOUT_MS,
-  maxContentLength: MAX_HTML_SIZE,
+  maxBodyLength: MAX_HTML_SIZE,
   ...proxyConfig, // Add proxy configuration here
  });
 
