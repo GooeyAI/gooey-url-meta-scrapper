@@ -12,12 +12,10 @@ const { getScrapingConfig } = require("./proxyConfig");
 
 const app = express();
 const port = process.env.PORT || 8090;
-
-const got = require("got");
-const twitter = require("twitter-text");
+const axios = require("axios");
 
 require("dotenv").config();
-
+const MAX_HTML_SIZE = 1000000;
 const REQUEST_TIMEOUT_MS =
  parseInt(process.env.REQUEST_TIMEOUT_SEC || 40) * 1000;
 
@@ -29,75 +27,42 @@ app.use(cors());
 
 app.get("/fetchUrlMeta", (req, res) => {
  const { url } = req.query;
- dispatch({ data: [url], cmd: "fetchMetadata" }).then((response) => {
-  res.json(response);
- });
+ return fetchMetadata(url)
+  .then((meta) => {
+   res.json(meta);
+  })
+  .catch((error) => {
+   console.error(error);
+   res.status(500).json({ error: error.message });
+  });
 });
 
-async function dispatch({ cmd, data }) {
- switch (cmd) {
-  case "extractUrls":
-   return twitter.extractUrls(data);
-  case "fetchMetadata":
-   let url;
-   for (url of data) {
-    try {
-     let metadata = await fetchMetadata(url);
-     metadata.url = url;
-     return metadata;
-    } catch (e) {
-     console.log("!", url, e);
-    }
-   }
-   break;
- }
- return {};
-}
-
 async function fetchMetadata(targetUrl) {
- const proxyConfig = await getScrapingConfig();
+ const proxyConfig = getScrapingConfig();
 
- const {
-  body: html,
-  url,
-  headers,
-  redirectUrls = [],
- } = await got(targetUrl, {
-  timeout: {
-   request: REQUEST_TIMEOUT_MS,
-  },
-  retry: {
-   limit: 0,
-  },
+ const response = await axios.get(targetUrl, {
+  timeout: REQUEST_TIMEOUT_MS,
+  maxBodyLength: MAX_HTML_SIZE,
   ...proxyConfig, // Add proxy configuration here
  });
 
- const contentType = headers?.["content-type"];
- let hostname = new URL(
-  redirectUrls.length ? [...redirectUrls].pop() : targetUrl
- ).hostname;
- const hostnameParts = hostname.split(".");
+ const contentType = response.headers["content-type"] || "";
+ const urlObj = new URL(targetUrl);
 
- if (hostnameParts.length >= 2) {
-  const mainDomain = hostnameParts.slice(-2, -1)[0]; // gooey, google, facebook etc
-  const ext = hostnameParts.slice(-1)[0]; // .ai, .com, .org, .net, etc
-  if (hostname.includes("googleapis"))
-   // for favicon logo from googleapis include subdomain
-   hostname = hostnameParts.slice(-3, -1).join("."); // storage.googleapis.com etc
-  hostname = mainDomain + "." + ext;
- }
+ const faviconUrl = new URL("https://www.google.com/s2/favicons");
+ faviconUrl.searchParams.set("sz", "128");
+ faviconUrl.searchParams.set("domain", urlObj?.hostname);
 
  const preMeta = {
-  redirect_urls: redirectUrls,
   url: targetUrl,
-  logo: `https://www.google.com/s2/favicons?sz=128&domain=${hostname}`,
+  logo: faviconUrl.toString(),
   content_type: contentType,
  };
 
  if (!contentType.includes("text/html")) return preMeta;
- const metaData = await metascraper({ html, url });
- return {
-  ...preMeta,
-  ...metaData,
- };
+
+ const metaData = await metascraper({ html: response.data, url: targetUrl });
+ console.log(`✅  Fetched metadata for ${targetUrl}`);
+
+ return { ...preMeta, ...metaData };
 }
