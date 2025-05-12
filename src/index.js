@@ -12,7 +12,6 @@ const { getScrapingConfig } = require("./proxyConfig");
 
 const app = express();
 const port = process.env.PORT || 8090;
-const axios = require("axios");
 
 require("dotenv").config();
 const MAX_HTML_SIZE = 1000000;
@@ -40,13 +39,26 @@ app.get("/fetchUrlMeta", (req, res) => {
 async function fetchMetadata(targetUrl) {
  const proxyConfig = getScrapingConfig();
 
- const response = await axios.get(targetUrl, {
-  timeout: REQUEST_TIMEOUT_MS,
-  maxBodyLength: MAX_HTML_SIZE,
-  ...proxyConfig, // Add proxy configuration here
- });
+ const controller = new AbortController();
+ const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
- const contentType = response.headers["content-type"] || "";
+ let response;
+ try {
+  response = await fetch(targetUrl, {
+   method: 'GET',
+   headers: proxyConfig.headers,
+   agent: proxyConfig.agent,
+   signal: controller.signal,
+  });
+ } finally {
+  clearTimeout(timeout);
+ }
+
+ if (!response.ok) {
+  throw new Error(`Failed to fetch: ${response.status} ${response.statusText}`);
+ }
+
+ const contentType = response.headers.get("content-type") || "";
  const urlObj = new URL(targetUrl);
 
  const faviconUrl = new URL("https://www.google.com/s2/favicons");
@@ -61,7 +73,19 @@ async function fetchMetadata(targetUrl) {
 
  if (!contentType.includes("text/html")) return preMeta;
 
- const metaData = await metascraper({ html: response.data, url: targetUrl });
+ // Enforce maxContentLength by reading the response as a stream
+ let chunks = [];
+ let totalLength = 0;
+ for await (const chunk of response.body) {
+  totalLength += chunk.length;
+  if (totalLength > MAX_HTML_SIZE) {
+   throw new Error("Response too large");
+  }
+  chunks.push(chunk);
+ }
+ const html = Buffer.concat(chunks).toString('utf-8');
+
+ const metaData = await metascraper({ html, url: targetUrl });
  console.log(`✅  Fetched metadata for ${targetUrl}`);
 
  return { ...preMeta, ...metaData };
