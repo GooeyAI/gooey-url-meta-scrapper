@@ -91,6 +91,10 @@ async function fetchMetadata(targetUrl) {
  const html = Buffer.concat(chunks).toString('utf-8');
 
  const metaData = await metascraper({ html, url: targetUrl });
+  // ignore images with drive.google.com
+  if (metaData.image && metaData.image.includes("drive.google.com")) {
+    delete metaData.image;
+  }
  console.log(`✅  Fetched metadata for ${targetUrl}`);
 
  return { ...preMeta, ...metaData };
