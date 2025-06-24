@@ -13,11 +13,8 @@ const { getScrapingConfig } = require("./proxyConfig");
 const app = express();
 const port = process.env.PORT || 8090;
 
-const got = require("got");
-const twitter = require("twitter-text");
-
 require("dotenv").config();
-
+const MAX_HTML_SIZE = 1000000;
 const REQUEST_TIMEOUT_MS =
  parseInt(process.env.REQUEST_TIMEOUT_SEC || 40) * 1000;
 
@@ -29,75 +26,91 @@ app.use(cors());
 
 app.get("/fetchUrlMeta", (req, res) => {
  const { url } = req.query;
- dispatch({ data: [url], cmd: "fetchMetadata" }).then((response) => {
-  res.json(response);
- });
+ return fetchMetadata(url)
+  .then((meta) => {
+   res.json(meta);
+  })
+  .catch((error) => {
+   console.error(error);
+   res.status(500).json({ error: error.message });
+  });
 });
 
-async function dispatch({ cmd, data }) {
- switch (cmd) {
-  case "extractUrls":
-   return twitter.extractUrls(data);
-  case "fetchMetadata":
-   let url;
-   for (url of data) {
-    try {
-     let metadata = await fetchMetadata(url);
-     metadata.url = url;
-     return metadata;
-    } catch (e) {
-     console.log("!", url, e);
-    }
-   }
-   break;
- }
- return {};
-}
-
 async function fetchMetadata(targetUrl) {
- const proxyConfig = await getScrapingConfig();
+  const proxyConfig = getScrapingConfig();
 
- const {
-  body: html,
-  url,
-  headers,
-  redirectUrls = [],
- } = await got(targetUrl, {
-  timeout: {
-   request: REQUEST_TIMEOUT_MS,
-  },
-  retry: {
-   limit: 0,
-  },
-  ...proxyConfig, // Add proxy configuration here
- });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
- const contentType = headers?.["content-type"];
- let hostname = new URL(
-  redirectUrls.length ? [...redirectUrls].pop() : targetUrl
- ).hostname;
- const hostnameParts = hostname.split(".");
+  let response;
+  try {
+    response = await fetch(targetUrl, {
+      method: "GET",
+      headers: {
+        ...proxyConfig.headers,
+      },
+      agent: proxyConfig.agent,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 
- if (hostnameParts.length >= 2) {
-  const mainDomain = hostnameParts.slice(-2, -1)[0]; // gooey, google, facebook etc
-  const ext = hostnameParts.slice(-1)[0]; // .ai, .com, .org, .net, etc
-  if (hostname.includes("googleapis"))
-   // for favicon logo from googleapis include subdomain
-   hostname = hostnameParts.slice(-3, -1).join("."); // storage.googleapis.com etc
-  hostname = mainDomain + "." + ext;
- }
+  console.log({
+    method: "GET",
+    headers: {
+      ...proxyConfig.headers,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.5",
+      Connection: "keep-alive",
+    },
+    agent: proxyConfig.agent,
+    signal: controller.signal,
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Failed to fetch: ${response.status} ${response.statusText}`
+    );
+  }
 
- const preMeta = {
-  redirect_urls: redirectUrls,
-  url: targetUrl,
-  logo: `https://www.google.com/s2/favicons?sz=128&domain=${hostname}`,
-  content_type: contentType,
- };
+  const contentType = response.headers.get("content-type") || "";
+  const urlObj = new URL(targetUrl);
 
- if (!contentType.includes("text/html")) return preMeta;
- const metaData = await metascraper({ html, url });
- return {
-  ...preMeta,
-  ...metaData,
- };
+  const faviconUrl = new URL("https://www.google.com/s2/favicons");
+  faviconUrl.searchParams.set("sz", "128");
+  faviconUrl.searchParams.set("domain", urlObj?.hostname);
+
+  const preMeta = {
+    url: targetUrl,
+    logo: faviconUrl.toString(),
+    content_type: contentType,
+  };
+
+  if (!contentType.includes("text/html")) return preMeta;
+
+  // Enforce maxContentLength by reading the response as a stream
+  let chunks = [];
+  let totalLength = 0;
+  for await (const chunk of response.body) {
+    totalLength += chunk.length;
+    if (totalLength < MAX_HTML_SIZE) chunks.push(chunk);
+  }
+  const html = Buffer.concat(chunks).toString("utf-8");
+
+  const metaData = await metascraper({ html, url: targetUrl });
+
+  // ignore images hosted on drive.google.com
+  if (metaData.image) {
+    try {
+      const imageUrl = new URL(metaData.image);
+      if (imageUrl.host === "drive.google.com") {
+        delete metaData.image;
+      }
+    } catch (error) {
+      console.error(`Invalid image URL: ${metaData.image}`, error);
+    }
+  }
+  console.log(`✅  Fetched metadata for ${targetUrl}`);
+
+  return { ...preMeta, ...metaData, content_length: totalLength };
 }

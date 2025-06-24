@@ -1,8 +1,9 @@
-// proxyConfig.js
+const dotenv = require("dotenv");
+dotenv.config();
+
 const path = require("path");
 const { HttpsProxyAgent } = require("https-proxy-agent");
 
-// Fake user agents array - you can expand this list
 const FAKE_USER_AGENTS = [
  // chrome
  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.5112.79 Safari/537.36",
@@ -25,15 +26,19 @@ const config = {
  BASE_DIR: process.env.BASE_DIR || path.join(__dirname, ""),
 };
 
-// Build proxy URL
 function getProxyUrl() {
  if (!config.SCRAPING_PROXY_HOST) return "";
 
- return `http://${config.SCRAPING_PROXY_USERNAME}:${config.SCRAPING_PROXY_PASSWORD}@${config.SCRAPING_PROXY_HOST}:${config.SCRAPING_PROXY_PORT}`;
+ const proxyUrl = new URL(
+  `http://${config.SCRAPING_PROXY_HOST}:${config.SCRAPING_PROXY_PORT}`
+ );
+ proxyUrl.username = config.SCRAPING_PROXY_USERNAME;
+ proxyUrl.password = config.SCRAPING_PROXY_PASSWORD;
+
+ return proxyUrl.toString();
 }
 
-// Main function to get axios config for scraping
-async function getScrapingConfig() {
+function getScrapingConfig() {
  const httpsProxyAgent = new HttpsProxyAgent(getProxyUrl());
  return {
   headers: {
