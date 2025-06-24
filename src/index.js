@@ -99,9 +99,16 @@ async function fetchMetadata(targetUrl) {
 
   const metaData = await metascraper({ html, url: targetUrl });
 
-  // ignore images with drive.google.com
-  if (metaData.image && metaData.image.includes("drive.google.com")) {
-    delete metaData.image;
+  // ignore images hosted on drive.google.com
+  if (metaData.image) {
+    try {
+      const imageUrl = new URL(metaData.image);
+      if (imageUrl.host === "drive.google.com") {
+        delete metaData.image;
+      }
+    } catch (error) {
+      console.error(`Invalid image URL: ${metaData.image}`, error);
+    }
   }
   console.log(`✅  Fetched metadata for ${targetUrl}`);
 
