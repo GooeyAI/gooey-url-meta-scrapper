@@ -51,71 +51,84 @@ function isBlockedImageHost(imageUrl) {
     return true;
   }
 }
-
-async function fetchMetadata(targetUrl) {
-  const proxyConfig = getScrapingConfig();
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
-  let response;
-  try {
-    response = await fetch(targetUrl, {
-      method: "GET",
-      headers: {
-        ...proxyConfig.headers,
-      },
-      agent: proxyConfig.agent,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
-
-  if (!response.ok) {
-    throw new Error(
-      `Failed to fetch: ${response.status} ${response.statusText}`
-    );
-  }
-
-  const contentType = response.headers.get("content-type") || "";
+function createFallbackMetadata(targetUrl, contentType) {
   const urlObj = new URL(targetUrl);
-
   const faviconUrl = new URL("https://www.google.com/s2/favicons");
   faviconUrl.searchParams.set("sz", "128");
-  faviconUrl.searchParams.set("domain", urlObj?.hostname);
+  faviconUrl.searchParams.set("domain", urlObj.hostname);
 
-  const preMeta = {
+  return {
     url: targetUrl,
     logo: faviconUrl.toString(),
     content_type: contentType,
+    title: undefined,
+    description: undefined,
+    image: undefined,
+    content_length: 0,
   };
+}
 
-  if (!contentType.includes("text/html")) return preMeta;
-
-  // Enforce maxContentLength by reading the response as a stream
-  let chunks = [];
+async function readHtmlWithinLimit(stream, maxSize) {
+  const chunks = [];
   let totalLength = 0;
-  for await (const chunk of response.body) {
+  for await (const chunk of stream) {
     totalLength += chunk.length;
-    if (totalLength < MAX_HTML_SIZE) chunks.push(chunk);
-  }
-  const html = Buffer.concat(chunks).toString("utf-8");
-
-  const metaData = await metascraper({ html, url: targetUrl });
-
-  // ignore images hosted on drive.google.com
-  if (metaData.image) {
-    try {
-      const imageUrl = new URL(metaData.image);
-      if (isBlockedImageHost(imageUrl.host)) {
-        delete metaData.image;
-      }
-    } catch (error) {
-      console.error(`Invalid image URL: ${metaData.image}`, error);
+    if (totalLength < maxSize) {
+      chunks.push(chunk);
     }
   }
-  console.log(`✅  Fetched metadata for ${targetUrl}`);
+  return Buffer.concat(chunks).toString("utf-8");
+}
+async function fetchMetadata(targetUrl) {
+  const proxyConfig = getScrapingConfig();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-  return { ...preMeta, ...metaData, content_length: totalLength };
+  try {
+    const response = await fetch(targetUrl, {
+      method: "GET",
+      headers: { ...proxyConfig.headers },
+      agent: proxyConfig.agent,
+      signal: controller.signal,
+    });
+
+    const contentType = response.headers.get("content-type") || "";
+
+    if (!response.ok) {
+      return {
+        ...createFallbackMetadata(targetUrl, contentType),
+        error: response.statusText,
+      };
+    }
+
+    if (!contentType.includes("text/html")) {
+      return {
+        ...createFallbackMetadata(targetUrl, contentType),
+        error: "Not a HTML page",
+      };
+    }
+
+    const html = await readHtmlWithinLimit(response.body, MAX_HTML_SIZE);
+
+    const metaData = await metascraper({ html, url: targetUrl });
+
+    if (metaData.image && isBlockedImageHost(metaData.image)) {
+      delete metaData.image;
+    }
+
+    console.log(`✅  Fetched metadata for ${targetUrl}`);
+    return {
+      ...createFallbackMetadata(targetUrl, contentType),
+      ...metaData,
+      content_length: html.length,
+    };
+  } catch (error) {
+    console.error("Metadata fetch failed:", error);
+    return {
+      ...createFallbackMetadata(targetUrl, contentType),
+      error: error.message,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
