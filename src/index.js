@@ -36,6 +36,22 @@ app.get("/fetchUrlMeta", (req, res) => {
   });
 });
 
+const BLOCKED_IMAGE_HOSTS = new Set([
+  "drive.google.com",
+  "docs.google.com",
+  "lh3.googleusercontent.com",
+]);
+
+function isBlockedImageHost(imageUrl) {
+  try {
+    const { host } = new URL(imageUrl);
+    return BLOCKED_IMAGE_HOSTS.has(host);
+  } catch (err) {
+    console.error(`Invalid image URL: ${imageUrl}`, err);
+    return true;
+  }
+}
+
 async function fetchMetadata(targetUrl) {
   const proxyConfig = getScrapingConfig();
 
@@ -56,17 +72,6 @@ async function fetchMetadata(targetUrl) {
     clearTimeout(timeout);
   }
 
-  console.log({
-    method: "GET",
-    headers: {
-      ...proxyConfig.headers,
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "en-US,en;q=0.5",
-      Connection: "keep-alive",
-    },
-    agent: proxyConfig.agent,
-    signal: controller.signal,
-  });
   if (!response.ok) {
     throw new Error(
       `Failed to fetch: ${response.status} ${response.statusText}`
@@ -103,7 +108,7 @@ async function fetchMetadata(targetUrl) {
   if (metaData.image) {
     try {
       const imageUrl = new URL(metaData.image);
-      if (imageUrl.host === "drive.google.com") {
+      if (isBlockedImageHost(imageUrl.host)) {
         delete metaData.image;
       }
     } catch (error) {
